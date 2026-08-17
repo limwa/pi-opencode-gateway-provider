@@ -1,0 +1,69 @@
+{
+  "name": "pi-opencode-gateway-provider",
+  "version": "0.1.0",
+  "description": "OpenCode Gateway model provider for the Pi coding agent",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "opencode",
+    "llm",
+    "gateway"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "verify": "pnpm format:check && pnpm check && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm verify"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.109"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.84.2 <1",
+    "@earendil-works/pi-coding-agent": ">=0.84.2 <1"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "opencode-ai": "1.18.18",
+    "@types/node": "24.12.4",
+    "@vitest/coverage-v8": "4.1.9",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  },
+  "packageManager": "pnpm@10.17.1"
+  ,
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "opencode-ai"
+    ]
+  }
+}
