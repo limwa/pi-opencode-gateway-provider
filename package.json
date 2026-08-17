@@ -66,5 +66,10 @@
     "typescript": "5.9.3",
     "vitest": "4.1.9"
   },
-  "packageManager": "npm@11.17.0"
+  "packageManager": "npm@11.17.0",
+  "allowScripts": {
+    "@google/genai@1.52.0": true,
+    "protobufjs@7.6.5": true,
+    "msgpackr-extract@3.0.4": true
+  }
 }
