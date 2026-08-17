@@ -30,6 +30,7 @@ interface InternalModel {
   reasoning: boolean;
   reasoningOptions?: CatalogModel["reasoning_options"];
   input: { text: boolean; image: boolean };
+  output: { text: boolean };
   cost: CatalogCost;
   limit: { context: number; output: number };
   options: Record<string, unknown>;
@@ -38,7 +39,6 @@ interface InternalModel {
 
 const OPENAI_COMPATIBLE_PACKAGES = new Set([
   "@ai-sdk/openai-compatible",
-  "@ai-sdk/xai",
   "@ai-sdk/groq",
   "@ai-sdk/cerebras",
   "@ai-sdk/deepinfra",
@@ -49,6 +49,15 @@ const OPENAI_COMPATIBLE_PACKAGES = new Set([
   "venice-ai-sdk-provider",
   "ai-gateway-provider",
   "merge-gateway-ai-sdk-provider",
+]);
+
+// Pi's built-in xAI catalog excludes these models from its Responses adapter.
+const PI_UNSUPPORTED_XAI_RESPONSES_MODELS = new Set([
+  "grok-3",
+  "grok-3-fast",
+  "grok-4.20-0309-non-reasoning",
+  "grok-4.20-0309-reasoning",
+  "grok-code-fast-1",
 ]);
 
 function finite(value: unknown, fallback = 0): number {
@@ -81,6 +90,24 @@ function camelCaseKeys(
   );
 }
 
+function modeOptions(
+  model: InternalModel,
+  body: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!body) return model.options;
+  const options = camelCaseKeys(body);
+  const reasoning = body["reasoning"];
+  if (
+    model.npm !== "@ai-sdk/openai" ||
+    !isRecord(reasoning) ||
+    typeof reasoning["mode"] !== "string"
+  ) {
+    return options;
+  }
+  const { reasoning: _reasoning, ...rest } = options;
+  return { ...rest, reasoningMode: reasoning["mode"] };
+}
+
 function mergeCost(target: CatalogCost, source?: CatalogCost): CatalogCost {
   return source ? deepMerge(target, source) : structuredClone(target);
 }
@@ -91,6 +118,7 @@ function fromCatalogModel(
   provider: CatalogProvider,
 ): InternalModel {
   const modalities = model.modalities?.input;
+  const outputModalities = model.modalities?.output;
   return {
     key,
     apiId: model.id || key,
@@ -106,6 +134,7 @@ function fromCatalogModel(
       text: modalities?.includes("text") ?? false,
       image: modalities?.includes("image") ?? false,
     },
+    output: { text: outputModalities?.includes("text") ?? false },
     cost: structuredClone(model.cost ?? {}),
     limit: {
       context: finite(model.limit?.context),
@@ -133,7 +162,7 @@ function catalogModels(provider: CatalogProvider): Map<string, InternalModel> {
         key: modeKey,
         name: `${base.name} ${mode.charAt(0).toUpperCase()}${mode.slice(1)}`,
         cost: mergeCost(base.cost, modeConfig.cost),
-        options: camelCaseKeys(modeConfig.provider?.body ?? {}),
+        options: modeOptions(base, modeConfig.provider?.body),
         headers: { ...base.headers, ...modeConfig.provider?.headers },
       });
     }
@@ -178,6 +207,12 @@ function configuredModel(
       image:
         configuredInput?.includes("image") ?? existing?.input.image ?? false,
     },
+    output: {
+      text:
+        model.modalities?.output?.includes("text") ??
+        existing?.output.text ??
+        true,
+    },
     cost,
     limit: {
       context: finite(model.limit?.context, existing?.limit.context ?? 0),
@@ -199,6 +234,7 @@ function apiFor(npm: string, upstreamProviderId: string): Api | undefined {
     return "anthropic-messages";
   }
   if (npm === "@ai-sdk/openai") return "openai-responses";
+  if (npm === "@ai-sdk/xai") return "openai-responses";
   if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") {
     return "google-generative-ai";
   }
@@ -206,6 +242,16 @@ function apiFor(npm: string, upstreamProviderId: string): Api | undefined {
   if (OPENAI_COMPATIBLE_PACKAGES.has(npm)) return "openai-completions";
   if (upstreamProviderId === "openai") return "openai-responses";
   return undefined;
+}
+
+function isInvalidBuiltInAlias(providerId: string, modelId: string): boolean {
+  if (
+    modelId === "gpt-5-chat-latest" &&
+    ["openai", "github-copilot", "openrouter"].includes(providerId)
+  ) {
+    return true;
+  }
+  return providerId === "openrouter" && modelId === "openai/gpt-5-chat";
 }
 
 function modelCost(cost: CatalogCost): ModelCost {
@@ -317,6 +363,8 @@ function createPiModel(
       supportsReasoningEffort: model.reasoning,
       supportsStore: true,
     };
+  } else if (api === "openai-responses" && model.npm === "@ai-sdk/xai") {
+    result.compat = { supportsLongCacheRetention: false };
   } else if (api === "anthropic-messages" && model.reasoningOptions) {
     result.compat = { forceAdaptiveThinking: true };
   }
@@ -383,9 +431,20 @@ export function resolveGatewayCatalog(
     const blacklist = new Set(providerConfig.blacklist ?? []);
     let count = 0;
     for (const [key, model] of providerModels) {
+      if (isInvalidBuiltInAlias(providerId, key)) continue;
       if (blacklist.has(key) || (whitelist && !whitelist.has(key))) continue;
       if (model.status === "deprecated") continue;
       if (model.status === "alpha" && !enableExperimentalModels) continue;
+      if (
+        providerId === "xai" &&
+        PI_UNSUPPORTED_XAI_RESPONSES_MODELS.has(key)
+      ) {
+        skippedModels.push({
+          id: `${providerId}/${key}`,
+          reason: "This xAI model is not supported by Pi's Responses adapter",
+        });
+        continue;
+      }
 
       const api = apiFor(model.npm, providerId);
       if (!api) {
@@ -407,6 +466,13 @@ export function resolveGatewayCatalog(
         skippedModels.push({
           id: piModel.id,
           reason: "Pi does not support any of the model input modalities",
+        });
+        continue;
+      }
+      if (!model.output.text) {
+        skippedModels.push({
+          id: piModel.id,
+          reason: "Pi's language-model interface requires text output",
         });
         continue;
       }
