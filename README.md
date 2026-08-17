@@ -89,7 +89,11 @@ OpenCode can dynamically install arbitrary AI SDK provider packages. Pi uses a
 fixed set of native streaming protocols, so a model with an API shape that
 cannot be mapped safely is omitted and reported by the status command. The
 protocols used by the Cloudflare OpenCode gateway—Anthropic, OpenAI, Google,
-and Workers AI's OpenAI-compatible endpoint—are covered.
+and Workers AI's OpenAI-compatible endpoint—are covered. The resolver also
+maps xAI to Pi's Responses adapter, Mistral to Pi's Conversations adapter, and
+the OpenAI-compatible providers supported by OpenCode (including Groq,
+Cerebras, DeepInfra, Together AI, Perplexity, Alibaba, OpenRouter, Hugging Face,
+NVIDIA, Fireworks, and Baseten).
 
 ## Security
 
@@ -109,8 +113,27 @@ Vitest:
 
 ```sh
 direnv exec . corepack pnpm verify
+direnv exec . corepack pnpm verify:upstream
 direnv exec . corepack pnpm test:coverage
 ```
+
+`verify:upstream` runs the regular suite and then invokes the pinned OpenCode
+CLI in a fully isolated XDG environment. Both resolvers consume the same
+models catalog file, and the differential test requires every OpenCode model
+to be either registered in Pi or explicitly classified as unsupported (for
+example, an image-only model). It also fails if any model from the
+Pi-compatible provider matrix uses an unrecognized OpenCode SDK protocol.
+
+OpenCode itself is intentionally not a production or ordinary development
+dependency. Its npm package is a large native CLI launcher; the resolver lives
+in private, unpublished packages and is not a stable library API. Shipping it
+at runtime would add a native sidecar and couple Pi startup to OpenCode's
+internal config, plugin, credential, and installation services. The upstream
+test downloads an exact CLI version on demand with `pnpm dlx`, then uses its
+public command boundary as the oracle. This gives us upstream behavioral parity
+without imposing that dependency on normal installs. The CI workflow runs the
+oracle weekly, so deliberate OpenCode version bumps surface resolver changes as
+reviewable differential failures rather than silent runtime regressions.
 
 The tests cover discovery validation, host normalization, command execution,
 JWT and opaque-token handling, remote config merging and redaction, provider

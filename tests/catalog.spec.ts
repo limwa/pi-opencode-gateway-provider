@@ -117,6 +117,16 @@ describe("OpenCode catalog resolution", () => {
             },
           },
         },
+        openai: {
+          ...catalogProvider().models["claude-test"]!,
+          id: "openai",
+          provider: { npm: "@ai-sdk/openai" },
+          experimental: {
+            modes: {
+              pro: { provider: { body: { reasoning: { mode: "pro" } } } },
+            },
+          },
+        },
         old: {
           ...catalogProvider().models["claude-test"]!,
           id: "old",
@@ -142,10 +152,16 @@ describe("OpenCode catalog resolution", () => {
     expect(stable.models.map((entry) => entry.model.id)).toEqual([
       "anthropic/base",
       "anthropic/base-fast",
+      "anthropic/openai",
+      "anthropic/openai-pro",
     ]);
     expect(stable.models[1]?.model.samplingParams).toEqual({
       serviceTier: "priority",
     });
+    expect(
+      stable.models.find((entry) => entry.model.id === "anthropic/openai-pro")
+        ?.model.samplingParams,
+    ).toEqual({ reasoningMode: "pro" });
     const experimental = resolveGatewayCatalog(
       config,
       modelsCatalog(provider),
@@ -177,6 +193,48 @@ describe("OpenCode catalog resolution", () => {
         reason: "Unsupported OpenCode provider package custom-proprietary-sdk",
       },
     ]);
+  });
+
+  it("uses Pi's Responses adapter for xAI and omits non-text generators", () => {
+    const provider = catalogProvider({
+      id: "xai",
+      name: "xAI",
+      npm: "@ai-sdk/xai",
+      models: {
+        grok: {
+          ...catalogProvider().models["claude-test"]!,
+          id: "grok",
+          name: "Grok",
+          provider: { npm: "@ai-sdk/xai" },
+        },
+        image: {
+          ...catalogProvider().models["claude-test"]!,
+          id: "image",
+          name: "Image generator",
+          provider: { npm: "@ai-sdk/xai" },
+          modalities: { input: ["text"], output: ["image"] },
+        },
+      },
+    });
+    const resolved = resolveGatewayCatalog(
+      {
+        provider: {
+          xai: { options: { baseURL: "https://gateway.example/xai" } },
+        },
+      },
+      modelsCatalog(provider),
+    );
+
+    expect(
+      resolved.models.map((entry) => [entry.model.id, entry.model.api]),
+    ).toEqual([["xai/grok", "openai-responses"]]);
+    expect(resolved.models[0]?.model.compat).toEqual({
+      supportsLongCacheRetention: false,
+    });
+    expect(resolved.skippedModels).toContainEqual({
+      id: "xai/image",
+      reason: "Pi's language-model interface requires text output",
+    });
   });
 
   it("expands OpenCode provider URL environment placeholders", () => {
