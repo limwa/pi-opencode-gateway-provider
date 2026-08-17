@@ -1,9 +1,25 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { registerOpenCodeGateway } from "../src/index.js";
+import { loadExtensions } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 
 describe("extension registration", () => {
+  it("loads through Pi's extension module aliases", async () => {
+    const extensionPath = fileURLToPath(
+      new URL("../src/index.ts", import.meta.url),
+    );
+    const result = await loadExtensions([extensionPath], process.cwd());
+
+    expect(result.errors).toEqual([]);
+    expect(result.extensions).toHaveLength(1);
+
+    const shutdown =
+      result.extensions[0]?.handlers.get("session_shutdown")?.[0];
+    await shutdown?.({}, {} as never);
+  });
+
   it("registers the account provider, status command, and expiry hook", async () => {
     const registerProvider = vi.fn();
     const registerCommand = vi.fn();

@@ -1,9 +1,13 @@
-import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
-import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
-import { createProvider, type Api, type Provider } from "@earendil-works/pi-ai";
+import {
+  anthropicMessagesApi,
+  createProvider,
+  googleGenerativeAIApi,
+  mistralConversationsApi,
+  openAICompletionsApi,
+  openAIResponsesApi,
+  type Api,
+  type Provider,
+} from "@earendil-works/pi-ai/compat";
 import { ManagedRuntime } from "effect";
 
 import { PROVIDER_ID, PROVIDER_NAME } from "./constants.js";
