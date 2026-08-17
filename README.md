@@ -29,8 +29,8 @@ resulting model catalog through one `OpenCode Gateway` account in Pi.
 Build and install a local checkout:
 
 ```sh
-direnv exec . corepack pnpm install
-direnv exec . corepack pnpm build
+direnv exec . npm install
+direnv exec . npm run build
 pi install /absolute/path/to/pi-opencode-gateway-provider
 ```
 
@@ -108,13 +108,13 @@ immediately before a request. Status output never includes token contents.
 
 ## Development
 
-The repository uses the declared Nix environment, pnpm, strict TypeScript, and
+The repository uses the declared Nix environment, npm, strict TypeScript, and
 Vitest:
 
 ```sh
-direnv exec . corepack pnpm verify
-direnv exec . corepack pnpm verify:upstream
-direnv exec . corepack pnpm test:coverage
+direnv exec . npm run verify
+direnv exec . npm run verify:upstream
+direnv exec . npm run test:coverage
 ```
 
 `verify:upstream` runs the regular suite and then invokes the pinned OpenCode
@@ -129,7 +129,7 @@ dependency. Its npm package is a large native CLI launcher; the resolver lives
 in private, unpublished packages and is not a stable library API. Shipping it
 at runtime would add a native sidecar and couple Pi startup to OpenCode's
 internal config, plugin, credential, and installation services. The upstream
-test downloads an exact CLI version on demand with `pnpm dlx`, then uses its
+test downloads an exact CLI version on demand with `npx`, then uses its
 public command boundary as the oracle. This gives us upstream behavioral parity
 without imposing that dependency on normal installs. The CI workflow runs the
 oracle weekly, so deliberate OpenCode version bumps surface resolver changes as

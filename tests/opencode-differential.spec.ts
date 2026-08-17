@@ -61,8 +61,8 @@ afterAll(async () => {
   );
 });
 
-function pnpmCommand(): string {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+function npxCommand(): string {
+  return process.platform === "win32" ? "npx.cmd" : "npx";
 }
 
 function gatewayConfig(): OpenCodeConfig {
@@ -125,8 +125,8 @@ async function resolveWithOpenCode(
   await writeFile(catalogPath, JSON.stringify(catalog));
 
   const result = await execa(
-    pnpmCommand(),
-    ["dlx", `opencode-ai@${OPENCODE_VERSION}`, "models", "--verbose"],
+    npxCommand(),
+    ["--yes", `opencode-ai@${OPENCODE_VERSION}`, "models", "--verbose"],
     {
       cwd: directories.project,
       maxBuffer: 16 * 1024 * 1024,
