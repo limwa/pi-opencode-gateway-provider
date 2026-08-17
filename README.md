@@ -135,11 +135,33 @@ without imposing that dependency on normal installs. The CI workflow runs the
 oracle weekly, so deliberate OpenCode version bumps surface resolver changes as
 reviewable differential failures rather than silent runtime regressions.
 
+### Architecture and dependencies
+
+The extension keeps Pi at the outer integration boundary and runs the complete
+login/catalog workflow inside one Effect `ManagedRuntime`. HTTP, authentication
+commands, state, and time are injected services backed by `Layer`s, while
+`Schema` validates every untrusted discovery, config, catalog, and credential
+value. Pi's abort signals interrupt the corresponding Effect fiber, which in
+turn cancels fetches and child processes.
+
+The small production dependencies each replace a security- or
+compatibility-sensitive implementation:
+
+- `jose` decodes JWT claims instead of maintaining custom base64url/JWT logic.
+- `execa` runs and cancels gateway authentication commands without a shell.
+- `remeda` supplies the same `mergeDeep` behavior used by OpenCode itself.
+- Effect v4 provides schemas, typed errors, pattern matching, services, layers,
+  state, time, interruption, and the managed runtime.
+
+Additional validation, process, merge, and dependency-injection libraries were
+deliberately avoided because they would duplicate those capabilities without
+reducing the remaining code.
+
 The tests cover discovery validation, host normalization, command execution,
-JWT and opaque-token handling, remote config merging and redaction, provider
-and model filtering, catalog inheritance, aliases, experimental modes,
-environment URL expansion, status output, extension registration, and a full
-request-path 403 integration case.
+JWT and opaque-token handling, HTTP failures and cancellation, remote config
+merging/substitution/redaction, provider and model filtering, catalog
+inheritance, aliases, experimental modes, environment URL expansion, status
+output, extension registration, and a full request-path 403 integration case.
 
 ## License
 

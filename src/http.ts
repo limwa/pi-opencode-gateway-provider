@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 
 import { MAX_HTTP_BODY_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import {
@@ -13,95 +13,141 @@ import type {
   JsonValue,
 } from "./types.js";
 
-function redact(value: string, secrets: readonly string[] | undefined): string {
-  let output = value;
-  for (const secret of secrets ?? []) {
-    if (secret) output = output.replaceAll(secret, "[REDACTED]");
-  }
-  return output;
+export const GatewayFetch = Context.Reference<FetchImplementation>(
+  "pi-opencode-gateway-provider/GatewayFetch",
+  { defaultValue: () => globalThis.fetch },
+);
+
+function redact(value: string, secrets: readonly string[] = []): string {
+  return secrets.reduce(
+    (output, secret) =>
+      secret ? output.replaceAll(secret, "[REDACTED]") : output,
+    value,
+  );
 }
 
-function responseExcerpt(
-  body: string,
-  secrets: readonly string[] | undefined,
-): string {
+function responseExcerpt(body: string, secrets?: readonly string[]): string {
   const compact = redact(body, secrets).replace(/\s+/g, " ").trim();
-  if (!compact) return "";
-  return ` Response: ${compact.slice(0, 240)}`;
+  return compact ? ` Response: ${compact.slice(0, 240)}` : "";
 }
 
-export function fetchJson(
+function connectionError(
+  cause: unknown,
+  description: string,
+  stage: GatewayErrorStage,
+  secrets?: readonly string[],
+): GatewayError {
+  return new GatewayError({
+    stage,
+    cause,
+    message: `Failed to establish a connection while ${description.toLowerCase()}: ${redact(describeUnknownError(cause), secrets)}`,
+  });
+}
+
+const decodeJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Json),
+);
+
+const requestJson = Effect.fn("GatewayHttpClient.requestJson")(function* (
   fetchImplementation: FetchImplementation,
   url: string,
   options: FetchJsonOptions,
   stage: GatewayErrorStage,
-): Effect.Effect<JsonValue, GatewayError> {
-  return Effect.tryPromise({
-    try: async (effectSignal) => {
-      const timeout = AbortSignal.timeout(
-        options.timeoutMs ?? REQUEST_TIMEOUT_MS,
-      );
-      const signals = [effectSignal, timeout];
-      if (options.signal) signals.push(options.signal);
-      const signal = AbortSignal.any(signals);
-
-      const response = await fetchImplementation(url, {
+) {
+  const response = yield* Effect.tryPromise({
+    try: (signal) =>
+      fetchImplementation(url, {
         ...(options.headers ? { headers: options.headers } : {}),
         redirect: "follow",
         signal,
-      });
-      const contentLength = Number(response.headers.get("content-length"));
-      if (
-        Number.isFinite(contentLength) &&
-        contentLength > MAX_HTTP_BODY_BYTES
-      ) {
-        throw new GatewayError({
-          stage,
-          message: `${options.description} declared more than ${MAX_HTTP_BODY_BYTES / 1024 / 1024} MiB of JSON.`,
-        });
-      }
-      const body = await response.text();
+      }),
+    catch: (cause) =>
+      connectionError(cause, options.description, stage, options.redact),
+  });
 
-      if (response.status === 403 && options.reauthenticateOnForbidden) {
-        throw forbiddenError(options.description);
-      }
-      if (!response.ok) {
-        throw new GatewayError({
-          stage,
-          status: response.status,
-          message: `${options.description} failed (HTTP ${response.status} ${response.statusText || "request failed"}).${responseExcerpt(body, options.redact)}`,
-        });
-      }
-      if (Buffer.byteLength(body, "utf8") > MAX_HTTP_BODY_BYTES) {
-        throw new GatewayError({
-          stage,
-          message: `${options.description} returned more than ${MAX_HTTP_BODY_BYTES / 1024 / 1024} MiB of JSON.`,
-        });
-      }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_HTTP_BODY_BYTES) {
+    return yield* new GatewayError({
+      stage,
+      message: `${options.description} declared more than ${MAX_HTTP_BODY_BYTES / 1024 / 1024} MiB of JSON.`,
+    });
+  }
 
-      try {
-        return JSON.parse(body) as JsonValue;
-      } catch (cause) {
-        throw new GatewayError({
+  const body = yield* Effect.tryPromise({
+    try: () => response.text(),
+    catch: (cause) =>
+      connectionError(cause, options.description, stage, options.redact),
+  });
+
+  if (response.status === 403 && options.reauthenticateOnForbidden) {
+    return yield* forbiddenError(options.description);
+  }
+
+  if (!response.ok) {
+    return yield* new GatewayError({
+      stage,
+      status: response.status,
+      message: `${options.description} failed (HTTP ${response.status} ${response.statusText || "request failed"}).${responseExcerpt(body, options.redact)}`,
+    });
+  }
+
+  if (Buffer.byteLength(body, "utf8") > MAX_HTTP_BODY_BYTES) {
+    return yield* new GatewayError({
+      stage,
+      message: `${options.description} returned more than ${MAX_HTTP_BODY_BYTES / 1024 / 1024} MiB of JSON.`,
+    });
+  }
+
+  return yield* decodeJson(body).pipe(
+    Effect.mapError(
+      (cause) =>
+        new GatewayError({
           stage,
           cause,
           message: `${options.description} returned invalid JSON.${responseExcerpt(body, options.redact)}`,
-        });
-      }
-    },
-    catch: (cause) => {
-      if (cause instanceof GatewayError) return cause;
-      const aborted =
-        options.signal?.aborted ||
-        (cause instanceof Error &&
-          (cause.name === "AbortError" || cause.name === "TimeoutError"));
-      return new GatewayError({
-        stage,
-        cause,
-        message: aborted
-          ? `${options.description} was cancelled or timed out.`
-          : `Failed to establish a connection while ${options.description.toLowerCase()}: ${redact(describeUnknownError(cause), options.redact)}`,
-      });
-    },
-  });
+        }),
+    ),
+  );
+});
+
+export class GatewayHttpClient extends Context.Service<
+  GatewayHttpClient,
+  {
+    getJson(
+      url: string,
+      options: FetchJsonOptions,
+      stage: GatewayErrorStage,
+    ): Effect.Effect<JsonValue, GatewayError>;
+  }
+>()("pi-opencode-gateway-provider/GatewayHttpClient") {
+  static readonly layer = Layer.effect(
+    GatewayHttpClient,
+    Effect.gen(function* () {
+      const fetchImplementation = yield* GatewayFetch;
+
+      const getJson = Effect.fn("GatewayHttpClient.getJson")(
+        (url: string, options: FetchJsonOptions, stage: GatewayErrorStage) =>
+          requestJson(fetchImplementation, url, options, stage).pipe(
+            Effect.timeoutOrElse({
+              duration: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+              orElse: () =>
+                Effect.fail(
+                  new GatewayError({
+                    stage,
+                    message: `${options.description} timed out.`,
+                  }),
+                ),
+            }),
+          ),
+      );
+
+      return GatewayHttpClient.of({ getJson });
+    }),
+  );
+
+  static layerWith(fetchImplementation: FetchImplementation) {
+    return this.layer.pipe(
+      Layer.provide(Layer.succeed(GatewayFetch, fetchImplementation)),
+    );
+  }
 }

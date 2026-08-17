@@ -26,5 +26,11 @@ describe("extension registration", () => {
       expect.objectContaining({ description: expect.any(String) }),
     );
     expect(on).toHaveBeenCalledWith("session_start", expect.any(Function));
+    expect(on).toHaveBeenCalledWith("session_shutdown", expect.any(Function));
+
+    const shutdown = on.mock.calls.find(
+      ([event]) => event === "session_shutdown",
+    )?.[1] as (() => Promise<void>) | undefined;
+    await shutdown?.();
   });
 });

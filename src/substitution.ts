@@ -2,72 +2,87 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { Effect, Schema } from "effect";
+
 import { GatewayError } from "./errors.js";
 import type { JsonObject } from "./types.js";
 
 export interface SubstitutionOptions {
-  env: Record<string, string>;
+  env: Readonly<Record<string, string>>;
   source: string;
 }
 
-function sourceDirectory(source: string): string {
-  return path.dirname(source);
+const decodeJsonObject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+);
+
+function resolveFile(filename: string, source: string): string {
+  const expanded = filename.startsWith("~/")
+    ? path.join(os.homedir(), filename.slice(2))
+    : filename;
+
+  return path.isAbsolute(expanded)
+    ? expanded
+    : path.resolve(path.dirname(source), expanded);
 }
 
-async function substituteText(
+/** Mirrors OpenCode's text-level {env:...} and {file:...} substitution. */
+const substituteText = Effect.fn("substituteText")(function* (
   text: string,
   options: SubstitutionOptions,
-): Promise<string> {
-  let output = text.replace(/\{env:([^}]+)\}/g, (_match, name: string) => {
-    return options.env[name] ?? process.env[name] ?? "";
-  });
+) {
+  let output = text.replace(
+    /\{env:([^}]+)\}/g,
+    (_match, name: string) => options.env[name] ?? process.env[name] ?? "",
+  );
 
-  const matches = Array.from(output.matchAll(/\{file:([^}]+)\}/g));
-  for (const match of matches) {
+  // File contents are JSON-escaped because substitution happens inside serialized
+  // config strings in OpenCode. Processing matches in order preserves duplicates.
+  for (const match of output.matchAll(/\{file:([^}]+)\}/g)) {
     const token = match[0];
-    let filename = match[1];
+    const filename = match[1];
     if (!filename) continue;
-    if (filename.startsWith("~/")) {
-      filename = path.join(os.homedir(), filename.slice(2));
-    }
-    const resolved = path.isAbsolute(filename)
-      ? filename
-      : path.resolve(sourceDirectory(options.source), filename);
-    let content: string;
-    try {
-      content = (await readFile(resolved, "utf8")).trim();
-    } catch (cause) {
-      throw new GatewayError({
-        stage: "configuration",
-        cause,
-        message: `The gateway config references ${token}, but ${resolved} could not be read.`,
-      });
-    }
-    output = output.replaceAll(token, JSON.stringify(content).slice(1, -1));
-  }
-  return output;
-}
 
-export async function substituteConfig(
+    const resolved = resolveFile(filename, options.source);
+    const content = yield* Effect.tryPromise({
+      try: () => readFile(resolved, "utf8"),
+      catch: (cause) =>
+        new GatewayError({
+          stage: "configuration",
+          cause,
+          message: `The gateway config references ${token}, but ${resolved} could not be read.`,
+        }),
+    });
+
+    output = output.replaceAll(
+      token,
+      JSON.stringify(content.trim()).slice(1, -1),
+    );
+  }
+
+  return output;
+});
+
+export const substituteConfig = Effect.fn("substituteConfig")(function* (
   config: JsonObject,
   options: SubstitutionOptions,
-): Promise<JsonObject> {
-  const text = await substituteText(JSON.stringify(config), options);
-  try {
-    return JSON.parse(text) as JsonObject;
-  } catch (cause) {
-    throw new GatewayError({
-      stage: "configuration",
-      cause,
-      message:
-        "The OpenCode config became invalid JSON after environment and file substitution.",
-    });
-  }
-}
+) {
+  const text = yield* substituteText(JSON.stringify(config), options);
 
-export async function substituteString(
-  value: string,
-  options: SubstitutionOptions,
-): Promise<string> {
-  return substituteText(value, options);
-}
+  return yield* decodeJsonObject(text).pipe(
+    Effect.mapError(
+      (cause) =>
+        new GatewayError({
+          stage: "configuration",
+          cause,
+          message:
+            "The OpenCode config became invalid JSON after environment and file substitution.",
+        }),
+    ),
+  );
+});
+
+export const substituteString = Effect.fn("substituteString")(
+  (value: string, options: SubstitutionOptions) =>
+    substituteText(value, options),
+);
