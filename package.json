@@ -1,5 +1,5 @@
 {
-  "name": "pi-opencode-gateway-provider",
+  "name": "@limwa/pi-opencode-gateway-provider",
   "version": "0.1.0",
   "description": "OpenCode Gateway model provider for the Pi coding agent",
   "keywords": [
@@ -10,6 +10,14 @@
     "gateway"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/limwa/pi-opencode-gateway-provider.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
