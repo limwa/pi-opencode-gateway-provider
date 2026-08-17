@@ -1,3 +1,5 @@
+import { DateTime } from "effect";
+
 import {
   NON_EXPIRING_TOKEN_TIMESTAMP,
   PROVIDER_NAME,
@@ -7,12 +9,12 @@ import { isNearExpiration } from "./jwt.js";
 import type { GatewayStatus } from "./types.js";
 
 function timestamp(value: number): string {
-  return new Date(value).toISOString();
+  return DateTime.makeUnsafe(value).pipe(DateTime.formatIso);
 }
 
 export function expirationWarning(
   status: GatewayStatus,
-  now = Date.now(),
+  now: number,
 ): string | undefined {
   if (
     status.tokenExpiresAt === undefined ||

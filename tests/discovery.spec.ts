@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { parseWellKnown, normalizeGatewayUrl } from "../src/discovery.js";
@@ -9,28 +10,35 @@ describe("gateway discovery", () => {
     ["https://example.com/", "https://example.com"],
     ["http://localhost:8787/base/", "http://localhost:8787/base"],
   ])("normalizes %s", (input, expected) => {
-    expect(normalizeGatewayUrl(input)).toBe(expected);
+    expect(Effect.runSync(normalizeGatewayUrl(input))).toBe(expected);
   });
 
   it.each(["", "ftp://example.com", "https://user:pass@example.com"])(
     "rejects invalid gateway input %j",
     (input) => {
-      expect(() => normalizeGatewayUrl(input)).toThrow(GatewayError);
+      expect(() => Effect.runSync(normalizeGatewayUrl(input))).toThrow(
+        GatewayError,
+      );
     },
   );
 
   it("parses embedded and remote config metadata", () => {
     expect(
-      parseWellKnown(
-        {
-          auth: { command: ["cloudflared", "access", "login"], env: "TOKEN" },
-          config: { enabled_providers: ["anthropic"] },
-          remote_config: {
-            url: "https://example.com/config.json",
-            headers: { "cf-access-token": "{env:TOKEN}" },
+      Effect.runSync(
+        parseWellKnown(
+          {
+            auth: {
+              command: ["cloudflared", "access", "login"],
+              env: "TOKEN",
+            },
+            config: { enabled_providers: ["anthropic"] },
+            remote_config: {
+              url: "https://example.com/config.json",
+              headers: { "cf-access-token": "{env:TOKEN}" },
+            },
           },
-        },
-        "https://example.com/.well-known/opencode",
+          "https://example.com/.well-known/opencode",
+        ),
       ),
     ).toEqual({
       auth: { command: ["cloudflared", "access", "login"], env: "TOKEN" },
@@ -47,10 +55,11 @@ describe("gateway discovery", () => {
     { auth: {} },
     { auth: { command: [], env: "TOKEN" } },
     { auth: { command: ["login"], env: "" } },
+    { auth: { command: ["login"], env: " " } },
     { auth: { command: ["login"], env: "TOKEN" }, remote_config: [] },
   ])("rejects malformed metadata", (value) => {
-    expect(() => parseWellKnown(value, "https://example.com")).toThrow(
-      GatewayError,
-    );
+    expect(() =>
+      Effect.runSync(parseWellKnown(value, "https://example.com")),
+    ).toThrow(GatewayError);
   });
 });

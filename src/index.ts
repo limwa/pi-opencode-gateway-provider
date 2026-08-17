@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 
 import { PROVIDER_ID, PROVIDER_NAME } from "./constants.js";
 import {
@@ -18,33 +18,58 @@ export { tokenExpiration } from "./jwt.js";
 export async function registerOpenCodeGateway(
   pi: ExtensionAPI,
   options: GatewayServiceOptions = {},
-): Promise<GatewayService> {
-  const service = await Effect.runPromise(GatewayService.make(options));
-  pi.registerProvider(createGatewayProvider(service));
+): Promise<GatewayService["Service"]> {
+  const runtime = ManagedRuntime.make(GatewayService.layer(options));
+  const service = await runtime.runPromise(
+    Effect.gen(function* () {
+      return yield* GatewayService;
+    }),
+  );
+
+  pi.registerProvider(createGatewayProvider(runtime));
 
   pi.registerCommand("opencode-gateway-status", {
     description: `Inspect ${PROVIDER_NAME} authentication and models`,
     handler: async (_args, ctx) => {
-      const snapshot = await Effect.runPromise(service.state.snapshot());
-      const configured = await ctx.modelRegistry
-        .getProviderAuth(PROVIDER_ID)
-        .then((auth) => auth !== undefined)
-        .catch(() => false);
-      const status = configured
-        ? snapshot
-        : { ...snapshot, phase: "not-configured" as const };
-      ctx.ui.notify(
-        formatGatewayStatus(status),
-        status.phase === "error" ? "error" : "info",
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const snapshot = yield* service.state.snapshot;
+          const configured = yield* Effect.tryPromise(() =>
+            ctx.modelRegistry.getProviderAuth(PROVIDER_ID),
+          ).pipe(
+            Effect.map((auth) => auth !== undefined),
+            Effect.orElseSucceed(() => false),
+          );
+          const status = configured
+            ? snapshot
+            : { ...snapshot, phase: "not-configured" as const };
+
+          yield* Effect.sync(() =>
+            ctx.ui.notify(
+              formatGatewayStatus(status),
+              status.phase === "error" ? "error" : "info",
+            ),
+          );
+        }),
       );
     },
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const status = await Effect.runPromise(service.state.snapshot());
-    const warning = expirationWarning(status);
-    if (warning) ctx.ui.notify(warning, "warning");
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const status = yield* service.state.snapshot;
+        const now = yield* service.now;
+        const warning = expirationWarning(status, now);
+
+        if (warning) {
+          yield* Effect.sync(() => ctx.ui.notify(warning, "warning"));
+        }
+      }),
+    );
   });
+
+  pi.on("session_shutdown", () => runtime.dispose());
 
   return service;
 }

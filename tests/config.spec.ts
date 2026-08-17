@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadOpenCodeConfig } from "../src/config.js";
 import { TOKEN_PLACEHOLDER } from "../src/constants.js";
-import { GatewayError } from "../src/errors.js";
+import { GatewayHttpClient } from "../src/http.js";
 import type { FetchImplementation, WellKnownDocument } from "../src/types.js";
 import { jsonResponse } from "./helpers.js";
 
@@ -44,11 +44,10 @@ describe("OpenCode config loading", () => {
 
     const config = await Effect.runPromise(
       loadOpenCodeConfig(
-        fetch,
         "https://gateway.example",
         metadata,
         "secret-token",
-      ),
+      ).pipe(Effect.provide(GatewayHttpClient.layerWith(fetch))),
     );
     expect(config.enabled_providers).toEqual(["anthropic"]);
     expect(config.provider?.["anthropic"]?.options).toEqual({
@@ -68,7 +67,9 @@ describe("OpenCode config loading", () => {
     ) as unknown as FetchImplementation;
     await expect(
       Effect.runPromise(
-        loadOpenCodeConfig(fetch, "https://gateway.example", metadata, "token"),
+        loadOpenCodeConfig("https://gateway.example", metadata, "token").pipe(
+          Effect.provide(GatewayHttpClient.layerWith(fetch)),
+        ),
       ),
     ).rejects.toMatchObject({
       status: 403,
@@ -82,7 +83,9 @@ describe("OpenCode config loading", () => {
     ) as unknown as FetchImplementation;
     await expect(
       Effect.runPromise(
-        loadOpenCodeConfig(fetch, "https://gateway.example", metadata, "token"),
+        loadOpenCodeConfig("https://gateway.example", metadata, "token").pipe(
+          Effect.provide(GatewayHttpClient.layerWith(fetch)),
+        ),
       ),
     ).rejects.toThrow("must be a JSON object");
   });
@@ -93,7 +96,6 @@ describe("OpenCode config loading", () => {
     ) as unknown as FetchImplementation;
     const operation = Effect.runPromise(
       loadOpenCodeConfig(
-        fetch,
         "https://gateway.example",
         {
           ...metadata,
@@ -102,7 +104,7 @@ describe("OpenCode config loading", () => {
           },
         },
         "super-secret-token",
-      ),
+      ).pipe(Effect.provide(GatewayHttpClient.layerWith(fetch))),
     );
     await expect(operation).rejects.toThrow("[REDACTED]");
     await expect(operation).rejects.not.toThrow("super-secret-token");

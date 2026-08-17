@@ -1,5 +1,5 @@
 import type { Context, ProviderAuthInteraction } from "@earendil-works/pi-ai";
-import { Effect } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { MODELS_CATALOG_URL } from "../src/constants.js";
@@ -12,6 +12,7 @@ describe("gateway provider requests", () => {
   it("uses the upstream alias ID and turns HTTP 403 into a login instruction", async () => {
     const discoveryFetch = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
+
       if (url === "https://gateway.example/.well-known/opencode") {
         return jsonResponse({
           auth: { command: ["login"], env: "TOKEN" },
@@ -34,60 +35,70 @@ describe("gateway provider requests", () => {
         });
       }
       if (url === MODELS_CATALOG_URL) return jsonResponse({});
+
       throw new Error(`Unexpected URL ${url}`);
     }) as unknown as FetchImplementation;
-    const service = await Effect.runPromise(
-      GatewayService.make({
+    const runtime = ManagedRuntime.make(
+      GatewayService.layer({
         fetch: discoveryFetch,
-        commandRunner: async () => "secret-token",
+        commandRunner: () => Effect.succeed("secret-token"),
       }),
     );
-    const authInteraction: ProviderAuthInteraction = {
-      signal: new AbortController().signal,
-      prompt: async () => "gateway.example",
-      notify: () => {},
-    };
-    const credential = await service.login(authInteraction);
-    await service.toAuth(credential);
 
-    const provider = createGatewayProvider(service);
-    await provider.refreshModels!({
-      credential,
-      allowNetwork: true,
-      signal: new AbortController().signal,
-      publish: async (publication) => {
-        publication.update?.();
-        return true;
-      },
-    });
-    const model = provider.getModels()[0]!;
-    expect(model.id).toBe("custom/alias");
+    try {
+      const authInteraction: ProviderAuthInteraction = {
+        signal: new AbortController().signal,
+        prompt: async () => "gateway.example",
+        notify: () => {},
+      };
+      const credential = await runtime.runPromise(
+        GatewayService.use((service) => service.login(authInteraction)),
+      );
+      await runtime.runPromise(
+        GatewayService.use((service) => service.toAuth(credential)),
+      );
 
-    const requestFetch = vi.fn(
-      async (_input: string | URL | Request, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as { model: string };
-        expect(body.model).toBe("real-model-id");
-        expect(new Headers(init?.headers).get("x-gateway-token")).toBe(
-          "secret-token",
-        );
-        return new Response("forbidden", {
-          status: 403,
-          statusText: "Forbidden",
-        });
-      },
-    );
-    const context: Context = { messages: [], tools: [] };
-    const result = await provider
-      .streamSimple(model, context, {
-        apiKey: "placeholder",
-        fetch: requestFetch as typeof globalThis.fetch,
-        maxRetries: 0,
-      })
-      .result();
+      const provider = createGatewayProvider(runtime);
+      await provider.refreshModels!({
+        credential,
+        allowNetwork: true,
+        signal: new AbortController().signal,
+        publish: async (publication) => {
+          publication.update?.();
+          return true;
+        },
+      });
+      const model = provider.getModels()[0]!;
+      expect(model.id).toBe("custom/alias");
 
-    expect(requestFetch).toHaveBeenCalledOnce();
-    expect(result.model).toBe("custom/alias");
-    expect(result.errorMessage).toContain("403");
-    expect(result.errorMessage).toContain("/login");
+      const requestFetch = vi.fn(
+        async (_input: string | URL | Request, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { model: string };
+          expect(body.model).toBe("real-model-id");
+          expect(new Headers(init?.headers).get("x-gateway-token")).toBe(
+            "secret-token",
+          );
+          return new Response("forbidden", {
+            status: 403,
+            statusText: "Forbidden",
+          });
+        },
+      );
+      const context: Context = { messages: [], tools: [] };
+      const result = await provider
+        .streamSimple(model, context, {
+          apiKey: "placeholder",
+          fetch: requestFetch as typeof globalThis.fetch,
+          maxRetries: 0,
+        })
+        .result();
+
+      expect(requestFetch).toHaveBeenCalledOnce();
+      expect(result.model).toBe("custom/alias");
+      expect(result.errorMessage).toContain("403");
+      expect(result.errorMessage).toContain("/login");
+    } finally {
+      await runtime.dispose();
+    }
   });
 });

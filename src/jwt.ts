@@ -1,3 +1,6 @@
+import { Option, pipe } from "effect";
+import { decodeJwt } from "jose";
+
 import {
   NON_EXPIRING_TOKEN_TIMESTAMP,
   TOKEN_EXPIRY_WARNING_MS,
@@ -8,44 +11,29 @@ export interface TokenExpiration {
   kind: "jwt" | "opaque";
 }
 
-function decodeBase64Url(value: string): string {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(
-    normalized.length + ((4 - (normalized.length % 4)) % 4),
-    "=",
-  );
-  return Buffer.from(padded, "base64").toString("utf8");
-}
+const decodeToken = Option.liftThrowable(decodeJwt);
 
 export function tokenExpiration(token: string): TokenExpiration {
-  const segments = token.split(".");
-  if (segments.length !== 3 || !segments[1]) {
-    return { kind: "opaque", expiresAt: NON_EXPIRING_TOKEN_TIMESTAMP };
-  }
+  return pipe(
+    decodeToken(token),
+    Option.flatMap((payload) => {
+      if (typeof payload.exp !== "number") return Option.none();
 
-  try {
-    const payload = JSON.parse(decodeBase64Url(segments[1])) as unknown;
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      !("exp" in payload) ||
-      typeof payload.exp !== "number" ||
-      !Number.isFinite(payload.exp)
-    ) {
-      return { kind: "opaque", expiresAt: NON_EXPIRING_TOKEN_TIMESTAMP };
-    }
-
-    const expiresAt = payload.exp * 1000;
-    if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
-      return { kind: "opaque", expiresAt: NON_EXPIRING_TOKEN_TIMESTAMP };
-    }
-    return { kind: "jwt", expiresAt };
-  } catch {
-    return { kind: "opaque", expiresAt: NON_EXPIRING_TOKEN_TIMESTAMP };
-  }
+      const expiresAt = payload.exp * 1000;
+      return Number.isSafeInteger(expiresAt) && expiresAt >= 0
+        ? Option.some({ kind: "jwt" as const, expiresAt })
+        : Option.none();
+    }),
+    Option.getOrElse(
+      (): TokenExpiration => ({
+        kind: "opaque",
+        expiresAt: NON_EXPIRING_TOKEN_TIMESTAMP,
+      }),
+    ),
+  );
 }
 
-export function isNearExpiration(expiresAt: number, now = Date.now()): boolean {
+export function isNearExpiration(expiresAt: number, now: number): boolean {
   return (
     expiresAt !== NON_EXPIRING_TOKEN_TIMESTAMP &&
     expiresAt - now <= TOKEN_EXPIRY_WARNING_MS

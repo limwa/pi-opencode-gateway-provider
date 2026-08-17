@@ -1,8 +1,8 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
+import { execa } from "execa";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { resolveGatewayCatalog } from "../src/catalog.js";
@@ -55,9 +55,10 @@ interface OracleModel {
   };
 }
 
-afterAll(() => {
-  for (const root of temporaryRoots)
-    rmSync(root, { recursive: true, force: true });
+afterAll(async () => {
+  await Promise.all(
+    temporaryRoots.map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 function pnpmCommand(): string {
@@ -101,11 +102,11 @@ function parseModels(stdout: string): Map<string, OracleModel> {
   return models;
 }
 
-function resolveWithOpenCode(
+async function resolveWithOpenCode(
   config: OpenCodeConfig,
   catalog: ModelsCatalog,
-): Map<string, OracleModel> {
-  const root = mkdtempSync(join(tmpdir(), "pi-opencode-oracle-"));
+): Promise<Map<string, OracleModel>> {
+  const root = await mkdtemp(join(tmpdir(), "pi-opencode-oracle-"));
   temporaryRoots.push(root);
   const directories = {
     config: join(root, "config"),
@@ -114,20 +115,23 @@ function resolveWithOpenCode(
     state: join(root, "state"),
     project: join(root, "project"),
   };
-  for (const directory of Object.values(directories)) {
-    mkdirSync(directory, { recursive: true });
-  }
-  const catalogPath = join(root, "models.json");
-  writeFileSync(catalogPath, JSON.stringify(catalog));
+  await Promise.all(
+    Object.values(directories).map((directory) =>
+      mkdir(directory, { recursive: true }),
+    ),
+  );
 
-  const result = spawnSync(
+  const catalogPath = join(root, "models.json");
+  await writeFile(catalogPath, JSON.stringify(catalog));
+
+  const result = await execa(
     pnpmCommand(),
     ["dlx", `opencode-ai@${OPENCODE_VERSION}`, "models", "--verbose"],
     {
       cwd: directories.project,
-      encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
       timeout: 120_000,
+      reject: false,
       env: {
         ...process.env,
         PATH: `${resolve("node_modules", ".bin")}${delimiter}${process.env["PATH"] ?? ""}`,
@@ -145,9 +149,8 @@ function resolveWithOpenCode(
     },
   );
 
-  if (result.error) throw result.error;
   expect(
-    result.status,
+    result.exitCode,
     `OpenCode ${OPENCODE_VERSION} failed:\n${result.stderr || result.stdout}`,
   ).toBe(0);
   return parseModels(result.stdout);
@@ -169,7 +172,7 @@ describe("OpenCode resolver differential", () => {
     ).toBe(true);
     const catalog = (await response.json()) as ModelsCatalog;
     const config = gatewayConfig();
-    const opencodeModels = resolveWithOpenCode(config, catalog);
+    const opencodeModels = await resolveWithOpenCode(config, catalog);
     const resolved = resolveGatewayCatalog(config, catalog, false);
 
     expect(accountedModelIds(resolved)).toEqual(
