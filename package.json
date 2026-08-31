@@ -55,7 +55,7 @@
     "prepublishOnly": "npm run verify"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.109",
+    "effect": "4.0.0-rc.112",
     "execa": "10.0.1",
     "jose": "6.2.9",
     "remeda": "2.40.0"
